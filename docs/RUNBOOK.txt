@@ -1,0 +1,72 @@
+================================================================================
+RUNBOOK: DEPLOYMENT AND OPERATION OF OPENTRACK-ENGINE
+================================================================================
+
+This document details the technical steps to operate the system in the laboratory.
+
+--------------------------------------------------------------------------------
+1. ENVIRONMENT CONFIGURATION (CRITICAL)
+--------------------------------------------------------------------------------
+
+A. .env File:
+   Ensure that the IPs match the Kafka cluster and the Things Service:
+   KAFKA_BROKERS=192.168.218.12:32001,192.168.218.12:32002,192.168.218.12:32003
+   THINGS_SERVICE_URL=http://192.168.218.12:30355
+
+B. Reinstall Worker dependencies:
+   If you have modified the code, always rebuild the image without cache:
+   $ docker build --no-cache -t opentrack-worker:latest ./worker
+
+--------------------------------------------------------------------------------
+2. KUBERNETES PREPARATION
+--------------------------------------------------------------------------------
+
+A. Namespace and Permissions:
+   $ kubectl create namespace api-flow
+   $ kubectl apply -f rbac.yaml  # Ensure you apply CronJob permissions
+
+B. Cleanup of old processes (if there are errors):
+   $ kubectl delete jobs --all -n api-flow
+   $ kubectl delete pods --all -n api-flow
+
+--------------------------------------------------------------------------------
+3. RUNNING THE API
+--------------------------------------------------------------------------------
+
+1. Load variables:
+   $ .\venv\Scripts\Activate.ps1
+   $ $env:PYTHONPATH = "."
+
+2. Launch server:
+   $ uvicorn src.main:app --port 8002 --reload
+
+--------------------------------------------------------------------------------
+4. TROUBLESHOOTING
+--------------------------------------------------------------------------------
+
+A. "ImagePullBackOff" Error:
+   Kubernetes cannot find the image. Ensure you have built the image in 
+   Docker Desktop and that in 'src/services/k8s_service.py' the policy 
+   is 'IfNotPresent'.
+
+B. "KafkaTimeoutError" Error:
+   - The Worker has tried to connect for 5 minutes and failed.
+   - Verify connectivity: 'kubectl run test -it --image=busybox -- nc -zv 192.168.218.12 32001'
+   - If the port is open but it still fails, it's an 'advertised.listeners' 
+     issue in the laboratory's Kafka server.
+
+C. "ModuleNotFoundError" Error:
+   A library is missing in the image. Check 'worker/requirements.txt' and 
+   rebuild the image with '--no-cache'.
+
+--------------------------------------------------------------------------------
+5. USEFUL COMMANDS
+--------------------------------------------------------------------------------
+
+- View logs in real-time:
+  $ kubectl logs -n api-flow -f -l app=opentrack-automatizacion-sensor-status
+
+- Force immediate execution:
+  Use the POST /api/v1/automations/{id}/trigger endpoint in Swagger.
+
+================================================================================
