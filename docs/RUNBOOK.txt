@@ -2,71 +2,137 @@
 RUNBOOK: DEPLOYMENT AND OPERATION OF OPENTRACK-ENGINE
 ================================================================================
 
-This document details the technical steps to operate the system in the laboratory.
+This document serves as the definitive technical guide for deploying, configuring,
+and maintaining the OpenTrack Engine in laboratory and production environments.
 
 --------------------------------------------------------------------------------
-1. ENVIRONMENT CONFIGURATION (CRITICAL)
+1. PREREQUISITES & ENVIRONMENT VERIFICATION
 --------------------------------------------------------------------------------
 
-A. .env File:
-   Ensure that the IPs match the Kafka cluster and the Things Service:
-   KAFKA_BROKERS=192.168.218.12:32001,192.168.218.12:32002,192.168.218.12:32003
-   THINGS_SERVICE_URL=http://192.168.218.12:30355
+Before starting, ensure the following services are healthy and reachable:
 
-B. Reinstall Worker dependencies:
-   If you have modified the code, always rebuild the image without cache:
+A. Apache Kafka Cluster:
+   - Must be accessible from within the Kubernetes cluster.
+   - Default ports in lab: 32001, 32002, 32003.
+
+B. WoT Things Service:
+   - Must be reachable at the URL specified in .env.
+   - Endpoint example: http://yourip:port
+
+C. Docker Desktop / Kubernetes:
+   - Ensure the context is set correctly: `kubectl cluster-info`
+   - Image builds must be visible to the K8s node.
+
+--------------------------------------------------------------------------------
+2. INITIAL CONFIGURATION (.env)
+--------------------------------------------------------------------------------
+
+The `.env` file at the root is the "source of truth". Verify these variables:
+
+   KUBERNETES_NAMESPACE=YourNameSpace
+   KAFKA_BROKERS=YourKafkaBrokers
+   THINGS_SERVICE_URL=YourThingsService
+   WORKER_IMAGE=opentrack-worker:latest
+
+Critical: If using Docker Desktop, use `host.docker.internal` or the specific 
+Laboratory IP (192.168.218.12) to ensure connectivity from within containers.
+
+--------------------------------------------------------------------------------
+3. KUBERNETES PREPARATION (RBAC)
+--------------------------------------------------------------------------------
+
+The API requires permissions to orchestrate Jobs and CronJobs.
+
+1. Create Namespace and apply RBAC:
+   $ kubectl apply -f rbac.yaml
+
+2. Verify the ServiceAccount:
+   $ kubectl get sa opentrack-api-sa -n api-flow
+
+3. (Optional) Cleanup old resources:
+   $ kubectl delete jobs --all -n api-flow
+   $ kubectl delete cronjobs --all -n api-flow
+
+--------------------------------------------------------------------------------
+4. BUILDING THE WORKER IMAGE
+--------------------------------------------------------------------------------
+
+Always rebuild the image after modifying `worker/main.py` or `worker/requirements.txt`.
+
+1. Build without cache to ensure freshness:
    $ docker build --no-cache -t opentrack-worker:latest ./worker
 
---------------------------------------------------------------------------------
-2. KUBERNETES PREPARATION
---------------------------------------------------------------------------------
-
-A. Namespace and Permissions:
-   $ kubectl create namespace api-flow
-   $ kubectl apply -f rbac.yaml  # Ensure you apply CronJob permissions
-
-B. Cleanup of old processes (if there are errors):
-   $ kubectl delete jobs --all -n api-flow
-   $ kubectl delete pods --all -n api-flow
+2. Verify image existence:
+   $ docker images | grep opentrack-worker
 
 --------------------------------------------------------------------------------
-3. RUNNING THE API
+5. RUNNING THE CONTROL PLANE (API)
 --------------------------------------------------------------------------------
 
-1. Load variables:
-   $ .\venv\Scripts\Activate.ps1
+1. Activate Virtual Environment:
+   $ .\venv\Scripts\Activate.ps1  # Windows
+   $ source venv/bin/activate     # Linux/Mac
+
+2. Install Requirements:
+   $ pip install -r requirements.txt
+
+3. Set PYTHONPATH and Launch:
    $ $env:PYTHONPATH = "."
+   $ uvicorn src.main:app --port 8000 --reload
 
-2. Launch server:
-   $ uvicorn src.main:app --port 8002 --reload
-
---------------------------------------------------------------------------------
-4. TROUBLESHOOTING
---------------------------------------------------------------------------------
-
-A. "ImagePullBackOff" Error:
-   Kubernetes cannot find the image. Ensure you have built the image in 
-   Docker Desktop and that in 'src/services/k8s_service.py' the policy 
-   is 'IfNotPresent'.
-
-B. "KafkaTimeoutError" Error:
-   - The Worker has tried to connect for 5 minutes and failed.
-   - Verify connectivity: 'kubectl run test -it --image=busybox -- nc -zv 192.168.218.12 32001'
-   - If the port is open but it still fails, it's an 'advertised.listeners' 
-     issue in the laboratory's Kafka server.
-
-C. "ModuleNotFoundError" Error:
-   A library is missing in the image. Check 'worker/requirements.txt' and 
-   rebuild the image with '--no-cache'.
+4. Validate API health:
+   Navigate to http://localhost:8000/api/v1/automations/ (should return [])
 
 --------------------------------------------------------------------------------
-5. USEFUL COMMANDS
+6. OPERATIONAL WORKFLOWS
 --------------------------------------------------------------------------------
 
-- View logs in real-time:
-  $ kubectl logs -n api-flow -f -l app=opentrack-automatizacion-sensor-status
+A. Creating an Automation:
+   Use the Swagger UI (http://localhost:8000/docs) to POST a new automation.
+   This will immediately create a CronJob in Kubernetes.
 
-- Force immediate execution:
-  Use the POST /api/v1/automations/{id}/trigger endpoint in Swagger.
+B. Triggering Manual Execution:
+   If you need to run an inference NOW without waiting for the Cron schedule:
+   $ curl -X POST http://localhost:8000/api/v1/automations/{id}/trigger
+
+C. Monitoring Logs:
+   To see what a specific worker is doing in real-time:
+   $ kubectl logs -n api-flow -f -l app=opentrack-{automation-name}
+
+D. Checking Execution History:
+   $ curl http://localhost:8000api/v1/automations/{id}/executions
+
+--------------------------------------------------------------------------------
+7. TROUBLESHOOTING (ADVANCED)
+--------------------------------------------------------------------------------
+
+Q: Pods stuck in "ImagePullBackOff"?
+A: K8s cannot find 'opentrack-worker:latest'. 
+   - If using Minikube: `minikube image load opentrack-worker:latest`
+   - Ensure `image_pull_policy` is `IfNotPresent` in `src/services/k8s_service.py` 
+     if you are not using a remote registry.
+
+Q: KafkaTimeoutError in Worker logs?
+A: The worker cannot reach the Kafka brokers.
+   - Run a connectivity test from a temporary pod:
+     $ kubectl run net-test -it --rm --image=busybox -n api-flow -- nc -zv YourIp 32001
+   - Check the "Laboratory Network Hack" in `worker/main.py` to ensure it's 
+     pointing to the correct IP.
+
+Q: Automations not appearing in K8s?
+A: Check the API console for "K8s Error". Ensure your local Kubeconfig is 
+   pointing to the correct cluster (`kubectl config current-context`).
+
+Q: SQLite "Database is locked"?
+A: Too many concurrent writes. Restart the API to clear active connections.
+
+--------------------------------------------------------------------------------
+8. MAINTENANCE & CLEANUP
+--------------------------------------------------------------------------------
+
+To completely reset the system state:
+1. Delete all K8s resources: `kubectl delete ns api-flow`
+2. Delete the local DB: `rm automations.db`
+3. Restart the API.
 
 ================================================================================
