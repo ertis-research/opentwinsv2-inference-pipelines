@@ -19,6 +19,11 @@ def _format_response(db_item):
     # Map back to schema names if needed (e.g. cron_expression)
     return data
 
+@router.get("/things")
+async def list_things():
+    """List all available things from the WoT service."""
+    return await wot_service.get_things()
+
 @router.post("/", response_model=schemas.AutomationResponse)
 async def create_automation(config: schemas.AutomationCreate, db: Session = Depends(get_db)):
     # 1. Prepare Env Vars for Worker
