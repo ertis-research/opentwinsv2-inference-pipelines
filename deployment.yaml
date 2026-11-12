@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opentrack-deployment
+  labels:
+    app: opentrack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opentrack
+  template:
+    metadata:
+      labels:
+        app: opentrack
+    spec:
+      serviceAccountName: opentrack-api-sa
+      imagePullSecrets:
+        - name: model-registry-creds
+      containers:
+      - name: opentrack
+        image: YOUR_REGISTRY/YOUR_PROJECT/opentrack:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - secretRef:
+            name: opentrack-cont-creds
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opentrack-service
+spec:
+  type: LoadBalancer   # Use LoadBalancer for cloud clusters, or NodePort/ClusterIP for local
+  selector:
+    app: opentrack
+  ports:
+  - protocol: TCP
+    port: 8000          # Port exposed to the outside
+    targetPort: 8000   # Port uvicorn is listening on inside the container

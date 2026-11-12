@@ -68,6 +68,64 @@ uvicorn src.main:app --port 8000 --reload
 ```
 Access the interactive documentation at `http://localhost:8000/docs`.
 
+## Deployment
+
+Replace the dynamic values in the commands before running them.
+
+### 1. Create worker image on registry
+
+```bash
+docker build -t <YOUR_REGISTRY>/<YOUR_PROJECT>/opentrack-worker:latest ./worker/
+```
+
+### 2. Push worker image into registry
+
+```bash
+docker push <YOUR_REGISTRY>/<YOUR_PROJECT>/opentrack-worker:latest
+```
+
+### 3. Create API image on registry
+
+```bash
+docker build -t <YOUR_REGISTRY>/<YOUR_PROJECT>/opentrack:latest ./
+```
+
+### 4. Push API image into registry
+
+```bash
+docker push <YOUR_REGISTRY>/<YOUR_PROJECT>/opentrack:latest
+```
+
+### 5. Kubernetes Deployment
+
+**IMPORTANT: REPLACE DYNAMIC DATA IN YAML FILES BEFORE RUNNING**
+
+Run the commands on the following order:
+
+```bash
+kubectl create secret generic opentrack-cont-creds --from-env-file=.env -n <YOUR_K8S_NAMESPACE>
+```
+
+```bash
+kubectl apply -f ./deployment.yaml -n <YOUR_K8S_NAMESPACE>
+```
+
+```bash
+kubectl apply -f ./rbac.yaml -n <YOUR_K8S_NAMESPACE>
+```
+
+After that, check with the following command the pod status:
+
+```bash
+kubectl get pods -n <YOUR_K8S_NAMESPACE>
+```
+
+When it has reaches Ready status, look for the service IP address and port that belongs to opentrack
+
+```bash
+kubectl get svc -n <YOUR_K8S_NAMESPACE>
+```
+
 ## 📖 API Usage Example
 
 ### Create an Automation
@@ -91,6 +149,7 @@ Access the interactive documentation at `http://localhost:8000/docs`.
 ## Testing
 
 Run the test suite to verify the integration:
+
 ```bash
 pytest tests/
 ```

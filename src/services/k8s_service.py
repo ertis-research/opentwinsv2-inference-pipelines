@@ -30,7 +30,8 @@ class K8sService:
             job_template=client.V1JobTemplateSpec(
                 spec=client.V1JobSpec(
                     template=template,
-                    backoff_limit=4
+                    backoff_limit=4,
+                    ttl_seconds_after_finished=60
                 )
             )
         )
