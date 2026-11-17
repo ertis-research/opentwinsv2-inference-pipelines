@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     KUBERNETES_NAMESPACE: str
     KAFKA_BROKERS: str
     THINGS_SERVICE_URL: str
+    BENTLOY_SERVICE_URL: str
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

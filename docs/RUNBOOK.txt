@@ -35,7 +35,7 @@ The `.env` file at the root is the "source of truth". Verify these variables:
    WORKER_IMAGE=opentrack-worker:latest
 
 Critical: If using Docker Desktop, use `host.docker.internal` or the specific 
-Laboratory IP (192.168.218.12) to ensure connectivity from within containers.
+Laboratory IP to ensure connectivity from within containers.
 
 --------------------------------------------------------------------------------
 3. KUBERNETES PREPARATION (RBAC)

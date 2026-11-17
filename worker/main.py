@@ -1,3 +1,4 @@
+import asyncio
 import os
 import json
 import uuid
@@ -6,59 +7,51 @@ import sys
 import socket 
 from datetime import datetime
 from kafka import KafkaProducer
+from src.services.wot_service import WotService
+from src.services.bentloy_service import BentloyService
 from cloudevents.v1.http import from_dict
-from cloudevents.v1.conversion import to_binary
+from cloudevents.v1.conversion import to_structured
 
-# --- LABORATORY NETWORK HACK ---
+wot_service = WotService(os.getenv("THINGS_SERVICE_URL", ""))
+bentloy_service = BentloyService(os.getenv("BENTLOY_SERVICE_URL", ""))
 
-def resolve_laboratory_ip():
-    original_getaddrinfo = socket.getaddrinfo
-    def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-        # Redirect ANY non-local host to the lab IP
-        target_host = host
-        if host not in ["localhost", "127.0.0.1"] and not host.startswith("10."):
-            target_host = "192.168.218.12"
-        return original_getaddrinfo(target_host, port, family, type, proto, flags)
-    socket.getaddrinfo = patched_getaddrinfo
-
-resolve_laboratory_ip()
-# ------------------------------------
-
-def get_thing_state(thing_id, properties):
+async def get_thing_state(thing_id, properties):
     """
-    Performs an HTTP request to the things-service to get the real state of the Thing.
+    Fetches the wanted properties from the current state of the thing
     """
-    base_url = os.getenv("THINGS_SERVICE_URL")
-    # Build the URL based on the API documentation: {base_url}/things/things/{thing_id}/state
-    url = f"{base_url.rstrip('/')}/things/things/{thing_id}/state"
-    
-    print(f"Fetching state for thing: {thing_id} at {url}")
-    
+    results = {}
     try:
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-        state_data = response.json()
-        
-        print(f"Successfully fetched state for {thing_id}: {state_data}")
-        
-        # The API returns { "prop": { "value": X, "lastUpdate": Y } }
-        results = {}
+        state = await wot_service.get_thing_state(thing_id)
+        if state is None:
+            raise Exception("Error while retrieving the thing's state, got None")
         for prop in properties:
-            prop_data = state_data.get(prop, {})
+            prop_data = state.get(prop, {})
             val = prop_data.get("value")
             results[prop] = float(val) if val is not None else 0.0
-            
         return results
     except Exception as e:
-        print(f"Error fetching thing state from {url}: {e}")
         return {prop: 0.0 for prop in properties}
 
-def run_inference(inputs_used, model_id):
-    # Mocking inference logic
+async def run_inference(inputs_used, model_id):
     print(f"Running inference with model: {model_id} and inputs: {inputs_used}")
-    return {"prediction": 0.89, "confidence": 0.95}
+    prediction_response = await bentloy_service.infere_with_model(model_name=model_id, input=inputs_used)
+    if isinstance(prediction_response, dict) and "predictions" in prediction_response:
+        data = prediction_response["predictions"][0]
+    # If the variable is the list of predictions itself
+    elif isinstance(prediction_response, list):
+        data = prediction_response[0]
+    # If the variable is already the single prediction dictionary
+    else:
+        data = prediction_response
 
-def main():
+    # Extract only the keys ending in "_predictions" and strip the suffix
+    return {
+        key.replace("_predictions", ""): value 
+        for key, value in data.items() 
+        if key.endswith("_predictions")
+    }
+
+async def main():
     print("Worker starting...")
     
     # Read configuration from env
@@ -76,14 +69,14 @@ def main():
     for thing_id, mappings in source_things.items():
         # Get list of properties to fetch
         props_to_fetch = [m["property"] for m in mappings]
-        states = get_thing_state(thing_id, props_to_fetch)
+        states = await get_thing_state(thing_id, props_to_fetch)
         
         # Map to inputs_used
         for m in mappings:
             inputs_used[m["mapping_key"]] = states.get(m["property"], 0.0)
 
     # 2. Run Model Inference
-    result = run_inference(inputs_used, ml_model)
+    result = await run_inference(inputs_used, ml_model)
 
     # 3. Publish to Kafka for each target event
     print(f"Connecting to Kafka at: {kafka_brokers}")
@@ -114,19 +107,18 @@ def main():
                 "specversion": "1.0",
                 "id": str(uuid.uuid4())
             }
-            
+
             data = {
-                "prediction": result["prediction"],
-                "confidence": result["confidence"],
-                "inputs_used": inputs_used
-            }
+                "outputs": result,
+                "inputs": inputs_used
+            } 
             
             # Merge attributes and data into one dict for from_dict
             event_dict = attributes.copy()
             event_dict["data"] = data
             
             event = from_dict(event_dict)
-            headers, body = to_binary(event)
+            headers, body = to_structured(event)
             
             # Convert CloudEvents headers (dict) to Kafka headers (list of tuples with bytes)
             kafka_headers = [
@@ -146,4 +138,4 @@ def main():
     print("Worker finished successfully.")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

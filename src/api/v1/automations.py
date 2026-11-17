@@ -2,15 +2,19 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from src.database import get_db
 from src.schemas import automation as schemas
+from src.config import settings
 from src.models.automation import Automation
+from src.services.bentloy_service import BentloyService
 from src.services.k8s_service import k8s_service
-from src.services.wot_service import wot_service
+from src.services.wot_service import WotService
 from src.services.kafka_service import kafka_service
 from src.config import settings
 import json
 from typing import List, Optional
 
 router = APIRouter()
+bentloy_service = BentloyService(settings.BENTLOY_SERVICE_URL)
+wot_service = WotService(settings.THINGS_SERVICE_URL)
 
 def _format_response(db_item):
     data = db_item.__dict__.copy()
@@ -27,13 +31,23 @@ async def create_automation(config: schemas.AutomationCreate, db: Session = Depe
         thing_id: [m.model_dump() for m in mappings]
         for thing_id, mappings in config.source_things.items()
     }
+
+    # Check if things exist
+    for thing_id in source_things_dict:
+        if (await wot_service.get_thing(thing_id)) is None:
+            raise HTTPException(status_code=404, detail=f"Thing {thing_id} not found")
+
+    # Check if model exists
+    if (await bentloy_service.get_model(model_name=config.ml_model)) is None:
+        raise HTTPException(status_code=404, detail=f"Model {config.ml_model} not found")
     
     env_vars = {
         "SOURCE_THINGS": json.dumps(source_things_dict),
         "ML_MODEL": config.ml_model,
         "TARGET_EVENTS": json.dumps([te.model_dump() for te in config.target_events]),
         "KAFKA_BROKERS": settings.KAFKA_BROKERS,
-        "THINGS_SERVICE_URL": settings.THINGS_SERVICE_URL
+        "THINGS_SERVICE_URL": settings.THINGS_SERVICE_URL,
+        "BENTLOY_SERVICE_URL": settings.BENTLOY_SERVICE_URL
     }
 
     # 2. Create CronJob in K8s

@@ -34,6 +34,7 @@ The system uses a `.env` file for environment-specific settings.
 | `KUBERNETES_NAMESPACE` | K8s namespace for worker execution | (Required) |
 | `KAFKA_BROKERS` | Comma-separated list of Kafka brokers | (Required) |
 | `THINGS_SERVICE_URL` | Base URL for the WoT Things Service | (Required) |
+| `BENTLOY_SERVICE_URL` | Base URL for the Bentloy Service | (Required) |
 | `WORKER_IMAGE` | Docker image for the worker | `opentrack-worker:latest` |
 | `DATABASE_URL` | SQLite database path | `sqlite:///./automations.db` |
 

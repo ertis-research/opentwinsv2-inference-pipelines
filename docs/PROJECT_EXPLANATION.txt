@@ -27,7 +27,7 @@ The system is designed to be decoupled and resilient:
     *   **Data Collection**: Uses `requests` to read real data from the `things-service`.
     *   **Inference**: Mocks the execution of an ML model with the received data.
     *   **Notification**: Publishes the result to Kafka using the **CloudEvents** standard. A **5-minute timeout** has been configured to support slow or unstable networks.
-    *   **Network Patch**: Includes a "hack" to force hostname resolution towards the laboratory IP (`192.168.218.12`), solving external network configuration issues.
+    *   **Network Patch**: Includes a "hack" to force hostname resolution towards the laboratory IP, solving external network configuration issues.
 
 ---
 
