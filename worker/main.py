@@ -17,20 +17,30 @@ bentloy_service = BentloyService(os.getenv("BENTLOY_SERVICE_URL", ""))
 
 async def get_thing_state(thing_id, properties):
     """
-    Fetches the wanted properties from the current state of the thing
+    Fetches the wanted properties from the current state of the thing.
+
+    Values are passed on as the Thing reports them (numbers, booleans, text, dates...): the model
+    preprocessing converts each one according to its input feature type. A property that cannot be
+    read is sent as a missing value (None), which the model fills in, instead of a made-up number.
     """
-    results = {}
     try:
         state = await wot_service.get_thing_state(thing_id)
-        if state is None:
-            raise Exception("Error while retrieving the thing's state, got None")
-        for prop in properties:
-            prop_data = state.get(prop, {})
-            val = prop_data.get("value")
-            results[prop] = float(val) if val is not None else 0.0
-        return results
     except Exception as e:
-        return {prop: 0.0 for prop in properties}
+        print(f"Error while retrieving the state of {thing_id}: {e}")
+        state = None
+    if state is None:
+        print(f"The state of {thing_id} could not be read: its properties are sent as missing values")
+        return {prop: None for prop in properties}
+
+    results = {}
+    for prop in properties:
+        prop_data = state.get(prop)
+        if not isinstance(prop_data, dict) or prop_data.get("value") is None:
+            print(f"Property {prop} of {thing_id} has no value: it is sent as a missing value")
+            results[prop] = None
+        else:
+            results[prop] = prop_data["value"]
+    return results
 
 async def run_inference(inputs_used, model_id):
     print(f"Running inference with model: {model_id} and inputs: {inputs_used}")
@@ -73,7 +83,7 @@ async def main():
         
         # Map to inputs_used
         for m in mappings:
-            inputs_used[m["mapping_key"]] = states.get(m["property"], 0.0)
+            inputs_used[m["mapping_key"]] = states.get(m["property"])
 
     # 2. Run Model Inference
     result = await run_inference(inputs_used, ml_model)
