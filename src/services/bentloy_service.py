@@ -1,6 +1,10 @@
 import httpx
 
 
+PAGE_SIZE = 100
+MAX_PAGES = 50  # safety cap to avoid endless paging
+
+
 class BentloyError(Exception):
     """Raised when the Bentloy service rejects a request (e.g. HTTP 400)."""
 
@@ -15,21 +19,35 @@ class BentloyService:
         """Fetch the model from bentloy service"""
         async with httpx.AsyncClient() as client:
             try:
-                # Bentloy pages start at 1. Since we filter with `query` and only
-                # use the first result, the first page is enough (no need to
-                # iterate over the remaining pages).
-                response = await client.post(f"{self.url}/list_models", json={"page": 1, "page_size": 10, "query": model_name})
-                if response.status_code == 400:
-                    try:
-                        detail = response.json().get("detail", response.text)
-                    except Exception:
-                        detail = response.text
-                    raise BentloyError(f"Bentloy rejected the request: {detail}")
-                response.raise_for_status()
-                models = (response.json()).get("discovered_models", [])
-                if len(models) == 0:
-                    return None
-                return models[0]
+                # `query` is a case-insensitive substring match on
+                # `inferred_model_name`, so several models can match (e.g.
+                # "churn_v2" also matches "churn_v2_eu"). We page through the
+                # results and require an exact match on the name.
+                page = 1
+                while page <= MAX_PAGES:
+                    response = await client.post(
+                        f"{self.url}/list_models",
+                        json={"page": page, "page_size": PAGE_SIZE, "query": model_name},
+                    )
+                    if response.status_code == 400:
+                        try:
+                            detail = response.json().get("detail", response.text)
+                        except Exception:
+                            detail = response.text
+                        raise BentloyError(f"Bentloy rejected the request: {detail}")
+                    response.raise_for_status()
+                    body = response.json()
+                    discovery = body.get("discovery") or {}
+                    if discovery.get("status") == "error":
+                        raise BentloyError(f"Bentloy model discovery failed: {discovery.get('error')}")
+                    for model in body.get("discovered_models", []):
+                        if model.get("inferred_model_name") == model_name:
+                            return model
+                    pagination = (body.get("pagination") or {}).get("discovered_models") or {}
+                    if not pagination.get("has_next"):
+                        break
+                    page += 1
+                return None
             except BentloyError:
                 raise
             except Exception as e:
@@ -49,7 +67,7 @@ class BentloyService:
         predict_url = model.get("predict_endpoint", f"http://{service_name}:3000/predict")
 
         payload = {
-            "model_name": service_name,
+            "model_name": model.get("inferred_model_name", model_name),
             "model_url": predict_url,
             "data": input
         }
