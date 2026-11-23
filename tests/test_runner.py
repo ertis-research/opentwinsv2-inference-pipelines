@@ -61,7 +61,7 @@ class TestAutomations(unittest.TestCase):
         # 2. List
         res = self.client.get("/api/v1/automations/")
         self.assertEqual(res.status_code, 200)
-        self.assertEqual(len(res.json()), 1)
+        self.assertEqual(len(res.json()["results"]), 1)
         
         # 3. Trigger
         res = self.client.post(f"/api/v1/automations/{auto_id}/trigger")

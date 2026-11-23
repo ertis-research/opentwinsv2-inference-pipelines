@@ -4,12 +4,14 @@ from src.database import get_db
 from src.schemas import automation as schemas
 from src.config import settings
 from src.models.automation import Automation
-from src.services.bentloy_service import BentloyService
+from src.services.bentloy_service import BentloyService, BentloyError
+from src.schemas.pagination import PaginatedResponse, PaginationMeta
 from src.services.k8s_service import k8s_service
 from src.services.wot_service import WotService
 from src.services.kafka_service import kafka_service
 from src.config import settings
 import json
+import math
 from typing import List, Optional
 
 router = APIRouter()
@@ -38,7 +40,11 @@ async def create_automation(config: schemas.AutomationCreate, db: Session = Depe
             raise HTTPException(status_code=404, detail=f"Thing {thing_id} not found")
 
     # Check if model exists
-    if (await bentloy_service.get_model(model_name=config.ml_model)) is None:
+    try:
+        model = await bentloy_service.get_model(model_name=config.ml_model)
+    except BentloyError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    if model is None:
         raise HTTPException(status_code=404, detail=f"Model {config.ml_model} not found")
     
     env_vars = {
@@ -77,7 +83,7 @@ async def create_automation(config: schemas.AutomationCreate, db: Session = Depe
 
     return _format_response(db_automation)
 
-@router.get("/", response_model=List[schemas.AutomationResponse])
+@router.get("/", response_model=PaginatedResponse[schemas.AutomationResponse])
 async def list_automations(
     page: int = Query(1, ge=1),
     pageSize: int = Query(10, ge=1, le=100),
@@ -88,8 +94,20 @@ async def list_automations(
     if search:
         query = query.filter(Automation.name.contains(search))
     
-    items = query.offset((page - 1) * pageSize).limit(pageSize).all()
-    return [_format_response(item) for item in items]
+    total_items = query.count()
+    total_pages = math.ceil(total_items / pageSize) if total_items else 0
+    items = query.order_by(Automation.id).offset((page - 1) * pageSize).limit(pageSize).all()
+    return PaginatedResponse(
+        results=[_format_response(item) for item in items],
+        pagination=PaginationMeta(
+            total_items=total_items,
+            total_pages=total_pages,
+            current_page=page,
+            page_size=pageSize,
+            has_next=page < total_pages,
+            has_prev=page > 1,
+        ),
+    )
 
 @router.get("/{id}", response_model=schemas.AutomationResponse)
 async def get_automation(id: int, db: Session = Depends(get_db)):
